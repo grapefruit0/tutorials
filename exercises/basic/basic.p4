@@ -43,8 +43,15 @@ struct headers {
 }
 
 /*************************************************************************
-*********************** P A R S E R  ***********************************
+*********************** P A R S E R  *************************************
 *************************************************************************/
+
+/* User-defined errors that may be signaled during parsing */
+error {
+    IPv4OptionsNotSupported,
+    IPv4IncorrectVersion,
+    IPv4ChecksumError
+}
 
 parser MyParser(packet_in packet,
                 out headers hdr,
@@ -53,13 +60,24 @@ parser MyParser(packet_in packet,
 
     state start {
         /* TODO: add parser logic */
+        packet.extract(hdr.ethernet);
+        transition select(hdr.ethernet.etherType) {
+            0x0800: parse_ipv4;
+            // no default rule: all other packets rejected
+        }
+    }
+
+    state parse_ipv4 {
+        packet.extract(hdr.ipv4);
+        verify(hdr.ipv4.version == 4w4, error.IPv4IncorrectVersion);
+        verify(hdr.ipv4.ihl == 4w5, error.IPv4OptionsNotSupported);
         transition accept;
     }
 }
 
 
 /*************************************************************************
-************   C H E C K S U M    V E R I F I C A T I O N   *************
+************   C H E C K S U M    V E R I F I C A T I O N   **************
 *************************************************************************/
 
 control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
@@ -68,7 +86,7 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 
 
 /*************************************************************************
-**************  I N G R E S S   P R O C E S S I N G   *******************
+**************  I N G R E S S   P R O C E S S I N G   ********************
 *************************************************************************/
 
 control MyIngress(inout headers hdr,
@@ -80,6 +98,10 @@ control MyIngress(inout headers hdr,
 
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         /* TODO: fill out code in action body */
+        standard_metadata.egress_spec = port;
+        hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
+        hdr.ethernet.dstAddr = dstAddr;
+        hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
     table ipv4_lpm {
@@ -104,7 +126,7 @@ control MyIngress(inout headers hdr,
 }
 
 /*************************************************************************
-****************  E G R E S S   P R O C E S S I N G   *******************
+****************  E G R E S S   P R O C E S S I N G   ********************
 *************************************************************************/
 
 control MyEgress(inout headers hdr,
@@ -114,7 +136,7 @@ control MyEgress(inout headers hdr,
 }
 
 /*************************************************************************
-*************   C H E C K S U M    C O M P U T A T I O N   **************
+*************   C H E C K S U M    C O M P U T A T I O N   ***************
 *************************************************************************/
 
 control MyComputeChecksum(inout headers hdr, inout metadata meta) {
@@ -139,17 +161,19 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 
 
 /*************************************************************************
-***********************  D E P A R S E R  *******************************
+***********************  D E P A R S E R  ********************************
 *************************************************************************/
 
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         /* TODO: add deparser logic */
+        packet.emit(hdr.ethernet);
+        packet.emit(hdr.ipv4);
     }
 }
 
 /*************************************************************************
-***********************  S W I T C H  *******************************
+***********************  S W I T C H  ************************************
 *************************************************************************/
 
 V1Switch(
