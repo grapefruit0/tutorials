@@ -58,12 +58,17 @@ parser MyParser(packet_in packet,
                 inout metadata meta,
                 inout standard_metadata_t standard_metadata) {
 
+    /* TODO: add parser logic */
     state start {
-        /* TODO: add parser logic */
+        transition parse_ethernet;
+    }
+
+    state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
-            0x0800: parse_ipv4;
+            TYPE_IPV4: parse_ipv4;
             // no default rule: all other packets rejected
+            // default: accept;
         }
     }
 
@@ -121,7 +126,9 @@ control MyIngress(inout headers hdr,
         /* TODO: fix ingress control logic
          *  - ipv4_lpm should be applied only when IPv4 header is valid
          */
-        ipv4_lpm.apply();
+        if (hdr.ipv4.isValid()) {
+            ipv4_lpm.apply();
+        }
     }
 }
 

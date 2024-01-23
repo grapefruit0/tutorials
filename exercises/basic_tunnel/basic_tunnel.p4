@@ -53,7 +53,7 @@ struct headers {
 }
 
 /*************************************************************************
-*********************** P A R S E R  ***********************************
+*********************** P A R S E R  *************************************
 *************************************************************************/
 
 // TODO: Update the parser to parse the myTunnel header as well
@@ -69,8 +69,18 @@ parser MyParser(packet_in packet,
     state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
-            TYPE_IPV4 : parse_ipv4;
-            default : accept;
+            TYPE_MYTUNNEL: parse_myTunnel;
+            TYPE_IPV4: parse_ipv4;
+            // no default rule: all other packets rejected
+            // default: accept;
+        }
+    }
+
+    state parse_myTunnel {
+        packet.extract(hdr.myTunnel);
+        transition select(hdr.myTunnel.proto_id) {
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
         }
     }
 
@@ -78,12 +88,10 @@ parser MyParser(packet_in packet,
         packet.extract(hdr.ipv4);
         transition accept;
     }
-
-
 }
 
 /*************************************************************************
-************   C H E C K S U M    V E R I F I C A T I O N   *************
+************   C H E C K S U M    V E R I F I C A T I O N   **************
 *************************************************************************/
 
 control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
@@ -92,7 +100,7 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 
 
 /*************************************************************************
-**************  I N G R E S S   P R O C E S S I N G   *******************
+**************  I N G R E S S   P R O C E S S I N G   ********************
 *************************************************************************/
 
 control MyIngress(inout headers hdr,
@@ -102,11 +110,31 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
+    // TODO: declare a new action: myTunnel_forward(egressSpec_t port)
+    action myTunnel_forward(egressSpec_t port) {
+        standard_metadata.egress_spec = port; 
+    }
+
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         standard_metadata.egress_spec = port;
         hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+    }
+
+    // TODO: declare a new table: myTunnel_exact
+    // TODO: also remember to add table entries!
+    table myTunnel_exact {
+        key = {
+            hdr.myTunnel.dst_id: exact;
+        }
+        actions = {
+            myTunnel_forward;
+            drop;
+            NoAction;
+        }
+        size = 1024;
+        default_action = drop();
     }
 
     table ipv4_lpm {
@@ -122,23 +150,20 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
-    // TODO: declare a new action: myTunnel_forward(egressSpec_t port)
-
-
-    // TODO: declare a new table: myTunnel_exact
-    // TODO: also remember to add table entries!
-
-
     apply {
         // TODO: Update control flow
-        if (hdr.ipv4.isValid()) {
+        if (!hdr.myTunnel.isValid() && hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
+        }
+
+        if (hdr.myTunnel.isValid()) {
+            myTunnel_exact.apply();
         }
     }
 }
 
 /*************************************************************************
-****************  E G R E S S   P R O C E S S I N G   *******************
+****************  E G R E S S   P R O C E S S I N G   ********************
 *************************************************************************/
 
 control MyEgress(inout headers hdr,
@@ -148,7 +173,7 @@ control MyEgress(inout headers hdr,
 }
 
 /*************************************************************************
-*************   C H E C K S U M    C O M P U T A T I O N   **************
+*************   C H E C K S U M    C O M P U T A T I O N   ***************
 *************************************************************************/
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
@@ -172,19 +197,20 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 }
 
 /*************************************************************************
-***********************  D E P A R S E R  *******************************
+***********************  D E P A R S E R  ********************************
 *************************************************************************/
 
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         // TODO: emit myTunnel header as well
+        packet.emit(hdr.myTunnel);
         packet.emit(hdr.ipv4);
     }
 }
 
 /*************************************************************************
-***********************  S W I T C H  *******************************
+***********************  S W I T C H  ************************************
 *************************************************************************/
 
 V1Switch(
